@@ -10,35 +10,56 @@ export default defineInterface({
   group: 'presentation',
   component: OmiCallButton,
   options: [
-    // SIP Configuration
+    // SIP Configuration Collection
     {
-      field: 'sipRealm',
-      name: 'SIP Realm',
+      field: 'sipConfigCollection',
+      name: 'SIP Configuration Collection',
       type: 'string',
       meta: { 
         width: 'full', 
         interface: 'input',
-        note: 'Enter the SIP domain/realm for your phone system'
+        note: 'Collection name containing SIP configurations (e.g., "sip_configs")'
       }
     },
+    // Field Mapping Configuration
     {
-      field: 'sipUser',
-      name: 'Extension Number',
+      field: 'sipRealmField',
+      name: 'SIP Realm Field',
       type: 'string',
       meta: { 
         width: 'half', 
         interface: 'input',
-        note: 'Your internal extension number'
+        note: 'Field name containing the SIP realm/domain (e.g., "sip_realm" or "domain")'
       }
     },
     {
-      field: 'sipPassword',
-      name: 'Extension Password',
+      field: 'sipUserField',
+      name: 'SIP User Field',
       type: 'string',
       meta: { 
         width: 'half', 
-        interface: 'input-password',
-        note: 'Password for your extension'
+        interface: 'input',
+        note: 'Field name containing the extension number (e.g., "sip_user" or "extension")'
+      }
+    },
+    {
+      field: 'sipPasswordField',
+      name: 'SIP Password Field',
+      type: 'string',
+      meta: { 
+        width: 'half', 
+        interface: 'input',
+        note: 'Field name containing the extension password (e.g., "sip_password" or "password")'
+      }
+    },
+    {
+      field: 'userField',
+      name: 'User ID Field',
+      type: 'string',
+      meta: { 
+        width: 'half', 
+        interface: 'input',
+        note: 'Field name containing the Directus user ID (e.g., "user" or "user_id")'
       }
     },
     // Phone Field Configuration

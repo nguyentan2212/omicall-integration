@@ -16,27 +16,39 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, PropType } from "vue";
-import { useApi } from "@directus/extensions-sdk";
+import { onMounted, onUnmounted, ref, computed } from "vue";
+import { useApi, useStores } from "@directus/extensions-sdk";
 
 const api = useApi();
+const { useUserStore } = useStores();
+const userStore = useUserStore();
 
 // Type definitions
 type SdkWindow = Window & {
   OMICallSDK?: any;
   OMICallUI?: any;
+  omicallInitialized?: boolean;
 };
 
 type Language = "vi" | "en" | "km";
+
+interface SipConfig {
+  sipRealm: string;
+  sipUser: string;
+  sipPassword: string;
+  user: string; // Directus user ID
+}
 
 interface Props {
   value: string | null;
   primaryKey: string | number | "+";
   collection: string;
   phoneField: string;
-  sipRealm: string;
-  sipUser: string;
-  sipPassword: string;
+  sipConfigCollection: string;
+  sipRealmField: string;
+  sipUserField: string;
+  sipPasswordField: string;
+  userField: string;
   useDefaultUI: boolean;
   lng: Language;
 }
@@ -56,23 +68,29 @@ const emit = defineEmits<{
 
 // Reactive state
 const statusText = ref("");
-const isInitialized = ref(false);
 const isRegistered = ref(false);
 const isLoading = ref(false);
+const currentSipConfig = ref<SipConfig | null>(null);
 
 // Computed properties
 const canCall = computed(() => {
-  return isRegistered.value && !isLoading.value;
+  return (
+    isRegistered.value && !isLoading.value && currentSipConfig.value !== null
+  );
 });
 
 const buttonTitle = computed(() => {
-  if (!isRegistered.value) return "Please configure OmiCall settings first";
+  if (!currentSipConfig.value)
+    return "No SIP configuration found for current user";
+  if (!isRegistered.value)
+    return "Please wait while connecting to phone system";
   if (isLoading.value) return "Initializing...";
   return "Make call via OmiCall";
 });
 
 const callButtonText = computed(() => {
   if (isLoading.value) return "Loading...";
+  if (!currentSipConfig.value) return "No Config";
   return "Call";
 });
 
@@ -80,6 +98,80 @@ const callButtonText = computed(() => {
 const w = window as SdkWindow;
 
 // Methods
+const getCurrentUser = (): string | null => {
+  const currentUser = userStore.currentUser;
+  console.log("userStore.currentUser", currentUser);
+  return currentUser?.id || null;
+};
+
+const getSipConfigForUser = async (): Promise<SipConfig | null> => {
+  try {
+    const currentUserId = getCurrentUser();
+    if (!currentUserId) {
+      throw new Error("No authenticated user found");
+    }
+
+    if (!props.sipConfigCollection) {
+      throw new Error("SIP configuration collection not specified");
+    }
+
+    // Validate field mappings
+    if (
+      !props.sipRealmField ||
+      !props.sipUserField ||
+      !props.sipPasswordField ||
+      !props.userField
+    ) {
+      throw new Error(
+        "Please configure all SIP field mappings in interface options"
+      );
+    }
+
+    // Query SIP configs for the current user using dynamic field mapping
+    const result = await api.get(`/items/${props.sipConfigCollection}`, {
+      params: {
+        filter: {
+          [props.userField]: {
+            _eq: currentUserId,
+          },
+        },
+        limit: 1,
+      },
+    });
+
+    if (!result || !result.data) {
+      throw new Error(`No SIP configuration found for user ${currentUserId}`);
+    }
+
+    const { data: rawData } = result.data;
+
+    if (!rawData || rawData.length === 0) {
+      throw new Error(`No SIP configuration found for user ${currentUserId}`);
+    }
+
+    const rawConfig = rawData[0];
+    console.log(rawData);
+    console.log("rawConfig", rawConfig);
+
+    // Map the raw config to our expected structure using dynamic field names
+    const config: SipConfig = {
+      sipRealm: rawConfig[props.sipRealmField],
+      sipUser: rawConfig[props.sipUserField],
+      sipPassword: rawConfig[props.sipPasswordField],
+      user: rawConfig[props.userField],
+    };
+
+    console.log("Found SIP config for user:", config);
+    return config;
+  } catch (error: any) {
+    console.error("Failed to fetch SIP configuration:", error);
+    statusText.value = `SIP configuration error: ${
+      error?.message || "Unknown error"
+    }`;
+    return null;
+  }
+};
+
 const getItem = async (): Promise<any> => {
   try {
     const result = await api.get(
@@ -96,42 +188,22 @@ const validateCallSDK = (): void => {
   if (typeof w.OMICallSDK === "undefined") {
     throw new Error("OMICall SDK is not loaded!");
   }
-};
-
-const initializeSDK = async (): Promise<boolean> => {
-  try {
-    validateCallSDK();
-
-    const initResult = await w.OMICallSDK.init({
-      lng: props.lng,
-      ui: {
-        toggleDial: props.useDefaultUI ? "show" : "hide",
-        dialPosition: "right",
-      },
-    });
-
-    if (!initResult) {
-      throw new Error("Failed to initialize OmiCall SDK");
-    }
-
-    isInitialized.value = true;
-    return true;
-  } catch (error: any) {
-    console.error("SDK initialization failed:", error);
-    statusText.value = `SDK initialization failed: ${
-      error?.message || "Unknown error"
-    }`;
-    return false;
+  if (!w.omicallInitialized) {
+    throw new Error("OMICall SDK is not yet initialized!");
   }
 };
 
 const registerExtension = async (): Promise<boolean> => {
   try {
-    const { sipRealm, sipUser, sipPassword } = props;
+    if (!currentSipConfig.value) {
+      throw new Error("No SIP configuration available");
+    }
+
+    const { sipRealm, sipUser, sipPassword } = currentSipConfig.value;
 
     if (!sipRealm || !sipUser || !sipPassword) {
       throw new Error(
-        "Missing SIP configuration. Please configure realm, user, and password in interface options."
+        "Invalid SIP configuration: missing realm, user, or password"
       );
     }
 
@@ -142,7 +214,11 @@ const registerExtension = async (): Promise<boolean> => {
     });
     console.log("registerResult", registerResult);
 
-    if (registerResult && !registerResult.status) {
+    if (
+      registerResult &&
+      !registerResult.status &&
+      registerResult.error !== "ALREADY_REGISTERED"
+    ) {
       throw new Error(registerResult.error || "Registration failed");
     }
 
@@ -160,7 +236,7 @@ const registerExtension = async (): Promise<boolean> => {
 };
 
 const ensureInitialized = async (): Promise<boolean> => {
-  if (isInitialized.value && isRegistered.value) {
+  if (isRegistered.value && currentSipConfig.value) {
     return true;
   }
 
@@ -168,9 +244,17 @@ const ensureInitialized = async (): Promise<boolean> => {
   statusText.value = "Initializing OmiCall...";
 
   try {
-    const sdkInitialized = await initializeSDK();
-    if (!sdkInitialized) return false;
+    // First, get SIP configuration for current user
+    const sipConfig = await getSipConfigForUser();
+    if (!sipConfig) {
+      return false;
+    }
+    currentSipConfig.value = sipConfig;
 
+    // Validate SDK is ready
+    validateCallSDK();
+
+    // Register extension (SDK is already initialized globally)
     const registered = await registerExtension();
     return registered;
   } finally {
@@ -234,10 +318,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (w.OMICallSDK) {
-    w.OMICallSDK.unregister();
-    console.log("OmiCall SDK unregistered on component unmount");
-  }
+  // if (w.OMICallSDK && isRegistered.value) {
+  //   w.OMICallSDK.unregister();
+  //   console.log("OmiCall SDK unregistered on component unmount");
+  // }
 });
 </script>
 
