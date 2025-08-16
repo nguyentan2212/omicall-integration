@@ -55,6 +55,11 @@ interface Props {
 
 // Props definition
 const props = withDefaults(defineProps<Props>(), {
+  sipConfigCollection: "omicall_settings",
+  sipRealmField: "sip_realm",
+  sipUserField: "sip_user",
+  sipPasswordField: "sip_password",
+  userField: "employee",
   value: null,
   primaryKey: "+",
   useDefaultUI: true,
